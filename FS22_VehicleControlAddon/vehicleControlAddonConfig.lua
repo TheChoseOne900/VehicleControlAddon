@@ -2,45 +2,55 @@
 -- vehicleControlAddonConfig
 --
 
-VCAValueType = {}
-VCAValueType.bool   = { valueType = XMLValueType.BOOL,   emptyValue = false,streamRead=streamReadBool   , streamWrite=streamWriteBool   , getXML=getXMLBool  , setXML=setXMLBool   }
-VCAValueType.int16  = { valueType = XMLValueType.INT,    emptyValue = 0    ,streamRead=streamReadInt16  , streamWrite=streamWriteInt16  , getXML=getXMLInt   , setXML=setXMLInt    }
-VCAValueType.float  = { valueType = XMLValueType.FLOAT,  emptyValue = 0.0  ,streamRead=streamReadFloat32, streamWrite=streamWriteFloat32, getXML=getXMLFloat , setXML=setXMLFloat  }
-VCAValueType.string = { valueType = XMLValueType.STRING, emptyValue = ""   ,streamRead=streamReadString , streamWrite=streamWriteString , getXML=getXMLString, setXML=setXMLString }
-
-local ConfigItems = {}
-ConfigItems.debugPrint          = { configType = VCAValueType.bool  , value = false }
-
-ConfigItems.cameraRotFactor     = { configType = VCAValueType.float , value = 0.5   }
-ConfigItems.cameraRotFactorRev  = { configType = VCAValueType.float , value = 0.3   }
-ConfigItems.cameraRotTime       = { configType = VCAValueType.float , value = 0.001 }
-ConfigItems.limitThrottle       = { configType = VCAValueType.int16 , value = 15    } -- 9 => 90%/100% 15 => 100%/75% -->
-ConfigItems.snapAngle           = { configType = VCAValueType.int16 , value = 4     } -- 45° -->
-ConfigItems.brakeForceFactor    = { configType = VCAValueType.float , value = 0.25  }
-ConfigItems.snapAngleHudX       = { configType = VCAValueType.float , value = -1    } -- any value >= 0 => position of bottom left corner / -1 above HUD -->
-ConfigItems.snapAngleHudY       = { configType = VCAValueType.float , value = -1    } -- any value >= 0 => position of bottom left corner / -1 above HUD -->
-ConfigItems.drawHud             = { configType = VCAValueType.bool  , value = true  }
-ConfigItems.mouseAutoRotateBack = { configType = VCAValueType.bool  , value = false }
-ConfigItems.turnOffAWDSpeed     = { configType = VCAValueType.int16 , value = 30,   } -- km/h -->
-						-- defaults --       
-ConfigItems.adaptiveSteering    = { configType = VCAValueType.bool  , value = false }
-ConfigItems.camOutsideRotation  = { configType = VCAValueType.int16 , value = 0     }
-ConfigItems.camInsideRotation   = { configType = VCAValueType.int16 , value = 0     }
-ConfigItems.camReverseRotation  = { configType = VCAValueType.bool  , value = false }
-ConfigItems.camRevOutRotation   = { configType = VCAValueType.bool  , value = false }
-ConfigItems.peekLeftRight       = { configType = VCAValueType.bool  , value = true  }
-ConfigItems.hiredWorker2        = { configType = VCAValueType.bool  , value = false } -- differential for hired worker -->
-ConfigItems.rotSpeedOut         = { configType = VCAValueType.float , value = 0.5   } 
-ConfigItems.rotSpeedIn          = { configType = VCAValueType.float , value = 0.5   } 
-ConfigItems.idleThrottle        = { configType = VCAValueType.bool  , value = false } 
-
-VCAGlobals  = {}
-local function init()
-	for name,item in pairs(ConfigItems) do 	
-		VCAGlobals[name] = item.value 
-	end
+local function compareSimple( a, b )
+	return a==b 
+end 
+local function compareFloat( a, b )
+	return math.abs( a - b ) < 1e-4 
 end 
 
+VCAValueType = {}
+VCAValueType.bool   = { valueType = XMLValueType.BOOL,   emptyValue = false,streamRead=streamReadBool   , streamWrite=streamWriteBool   , getXML=getXMLBool  , setXML=setXMLBool  , compare=compareSimple }
+VCAValueType.int16  = { valueType = XMLValueType.INT,    emptyValue = 0    ,streamRead=streamReadInt16  , streamWrite=streamWriteInt16  , getXML=getXMLInt   , setXML=setXMLInt   , compare=compareSimple }
+VCAValueType.float  = { valueType = XMLValueType.FLOAT,  emptyValue = 0.0  ,streamRead=streamReadFloat32, streamWrite=streamWriteFloat32, getXML=getXMLFloat , setXML=setXMLFloat , compare=compareFloat }
+VCAValueType.string = { valueType = XMLValueType.STRING, emptyValue = ""   ,streamRead=streamReadString , streamWrite=streamWriteString , getXML=getXMLString, setXML=setXMLString, compare=compareSimple }
+
+local ConfigItems = {}
+local ConfigItemIndex = {}
+VCAGlobals  = {}
+
+local function addConfigItem( name, configType, value )
+	table.insert( ConfigItemIndex, name )
+	ConfigItems[name] = { configType = configType, value = value }
+	VCAGlobals[name]  = value 
+end 
+
+local function init()
+	addConfigItem( "debugPrint"          , VCAValueType.bool  , false )
+	
+	addConfigItem( "cameraRotFactor"     , VCAValueType.float , 0.5   )
+	addConfigItem( "cameraRotFactorRev"  , VCAValueType.float , 0.3   )
+	addConfigItem( "cameraRotTime"       , VCAValueType.float , 0.001 )
+	addConfigItem( "limitThrottle"       , VCAValueType.int16 , 15    ) -- 9 => 90%/100% 15 => 100%/75% -->
+	addConfigItem( "snapAngle"           , VCAValueType.int16 , 3     ) -- 45° -->
+	addConfigItem( "brakeForceFactor"    , VCAValueType.float , 1.0   )
+	addConfigItem( "snapAngleHudX"       , VCAValueType.float , -1    ) -- any value >= 0 => position of bottom left corner / -1 above HUD -->
+	addConfigItem( "snapAngleHudY"       , VCAValueType.float , -1    ) -- any value >= 0 => position of bottom left corner / -1 above HUD -->
+	addConfigItem( "drawHud"             , VCAValueType.bool  , true  )
+	addConfigItem( "mouseAutoRotateBack" , VCAValueType.bool  , false )
+	addConfigItem( "turnOffAWDSpeed"     , VCAValueType.int16 , 30    ) -- km/h -->
+	-- defaults --
+	addConfigItem( "adaptiveSteering"    , VCAValueType.bool  , false )
+	addConfigItem( "camOutsideRotation"  , VCAValueType.int16 , 0     )
+	addConfigItem( "camInsideRotation"   , VCAValueType.int16 , 0     )
+	addConfigItem( "camReverseRotation"  , VCAValueType.bool  , false )
+	addConfigItem( "camRevOutRotation"   , VCAValueType.bool  , false )
+	addConfigItem( "peekLeftRight"       , VCAValueType.bool  , true  )
+	addConfigItem( "hiredWorker2"        , VCAValueType.bool  , false ) -- differential for hired worker -->
+	addConfigItem( "rotSpeedOut"         , VCAValueType.float , 0.5   ) 
+	addConfigItem( "rotSpeedIn"          , VCAValueType.float , 0.5   ) 
+	addConfigItem( "idleThrottle"        , VCAValueType.bool  , false ) 
+end 
 init()
 
 function vcaDebugPrint( ... )
@@ -96,13 +106,7 @@ local function saveConfig( fileName )
 	local xmlFile = createXMLFile( "vehicleControlAddon", fileName, "vehicleControlAddon" )
 	local i = 0
   for name,item in pairs(ConfigItems) do 	
-		local isNonDefault = false 
-		if item.configType == VCAValueType.float then 
-			isNonDefault = math.abs( VCAGlobals[name] - item.value ) > 1e-4
-		elseif VCAGlobals[name] ~= item.value then 
-			isNonDefault = true 
-		end 
-		if isNonDefault then 
+		if not item.configType.compare( VCAGlobals[name], item.value ) then 
 			vcaDebugPrint("VCAGlobals."..tostring(name).." = "..tostring(VCAGlobals[name]))
 			local xmlKey = string.format("vehicleControlAddon.configuration(%d)", i)
 			i = i + 1
@@ -152,40 +156,54 @@ vehicleControlAddonConfigEvent_mt = Class(vehicleControlAddonConfigEvent, Event)
 InitEventClass(vehicleControlAddonConfigEvent, "vehicleControlAddonConfigEvent")
 function vehicleControlAddonConfigEvent.emptyNew()
   local self = Event.new(vehicleControlAddonConfigEvent_mt)
-  return self
+ 	self.check1 = 244
+	self.check2 = 108
+	return self
 end
 function vehicleControlAddonConfigEvent.new(init)
   local self = vehicleControlAddonConfigEvent.emptyNew()
-	if init then 
-		self.init = true 
-	else 
-		self.init = false 
-	end 
   return self
 end
 function vehicleControlAddonConfigEvent:readStream(streamId, connection)
-	self.init = streamReadBool( streamId )
-	local count = streamReadInt16( streamId )
-  for i=1,count do 
-		local name = streamReadString( streamId )
-		local item = ConfigItems[name]
-		VCAGlobals[name] = item.configType.streamRead( streamId )
+	local check1 = streamReadUInt8(streamId)
+	self.globals = {}
+  for i,name in pairs( ConfigItemIndex ) do
+		local item  = ConfigItems[name]
+		self.globals[name] = item.configType.streamRead( streamId ) 
+		vcaDebugPrint("Info: vehicleControlAddonConfigEvent received value "..tostring(self.globals[name]).." for state "..tostring(name))
 	end
-  self:run(connection)
+	local check2 = streamReadUInt8(streamId)
+	
+	if     check1 ~= self.check1 then 
+		print("Error in vehicleControlAddonConfigEvent: Event has wrong start marker. Check other mods.")
+	elseif check2 ~= self.check2 then 
+		print("Error in vehicleControlAddonConfigEvent: Event has wrong end marker. ")
+	else 
+		self:run(connection)
+	end 
 end
 function vehicleControlAddonConfigEvent:writeStream(streamId, connection)
-	streamWriteBool( streamId, self.init )
-	streamWriteInt16( streamId, #ConfigItems )
-  for name,item in pairs(ConfigItems) do 	
-		streamWriteString( streamId, name )
+	streamWriteUInt8(streamId, self.check1 )
+  for i,name in pairs( ConfigItemIndex ) do
+		local item  = ConfigItems[name]
 		item.configType.streamWrite( streamId, VCAGlobals[name] )
 	end
+	streamWriteUInt8(streamId, self.check2 )
 end
 function vehicleControlAddonConfigEvent:run(connection)
-  if self.init then 
-		if not ( vehicleControlAddon.initSpecializationDone ) then 
-			vehicleControlAddon.initSpecialization()
-		end 
+	if type( self.globals ) == "table" then 
+		for name, value in pairs( self.globals ) do
+			local old = VCAGlobals[name]
+			VCAGlobals[name] = value
+			local item = ConfigItems[name]
+			if not item.configType.compare( old, value ) then 
+				for _, vehicle in pairs(g_currentMission.vehicles) do
+					if type( vehicle.vcaSetNewDefault ) == "function" then 
+						vehicle:vcaSetNewDefault( name, old, value, true )
+					end
+				end
+			end 
+		end
 	end 
   if not connection:getIsServer() then
     g_server:broadcastEvent( vehicleControlAddonConfigEvent.new(self.save), nil, connection, nil )
