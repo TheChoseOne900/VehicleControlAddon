@@ -123,6 +123,14 @@ function VehicleControlAddonConfig:vcaGetValues( force )
 			local v = self.vcaBackup[n]
 			if     s.parameter == "camRotation" then 
 				element:setState( v + 1 )
+			elseif s.parameter == "adaptiveSteering" then 
+				if     v == vehicleControlAddon.steeringTrue then 
+					element:setState( 2 )
+				elseif v == vehicleControlAddon.steeringSoft then 
+					element:setState( 3 )
+				else
+					element:setState( 1 )
+				end 
 			elseif s.parameter == "percent5" then 
 				element:setState( math.floor( v * 20 + 0.5 ) + 1 )
 			elseif s.parameter == "percent10" then 
@@ -155,6 +163,15 @@ function VehicleControlAddonConfig:vcaSetValues( force )
 		if self.vcaBackup[n] ~= nil then 
 			if     s.parameter == "camRotation" then 
 				v = element:getState() - 1
+			elseif s.parameter == "adaptiveSteering" then 
+				local i = element:getState()
+				if     i == 2 then 
+					v = vehicleControlAddon.steeringTrue
+				elseif i == 3 then 
+					v = vehicleControlAddon.steeringSoft
+				else 
+					v = vehicleControlAddon.steeringFalse
+				end 
 			elseif s.parameter == "percent5" then 
 				v = 0.05 * ( element:getState() - 1 )
 			elseif s.parameter == "percent10" then 
@@ -251,6 +268,11 @@ function VehicleControlAddonConfig:onCreateSubElement( element, parameter )
 													vehicleControlAddon.getText("vcaValueLight", "LIGHT"), 
 													vehicleControlAddon.getText("vcaValueNormal", "NORMAL"), 
 													vehicleControlAddon.getText("vcaValueStrong", "STRONG"), 
+												} )
+		elseif parameter == "adaptiveSteering" then
+			element:setTexts(	{ vehicleControlAddon.getText("vcaValueOff", "OFF"), 
+													vehicleControlAddon.getText("vcaValueStrong", "STRONG"), 
+													vehicleControlAddon.getText("vcaValueLight", "LIGHT"), 
 												} )
 		elseif parameter == "percent10" then
 			local texts = {}

@@ -5,38 +5,6 @@
 
 vehicleControlAddon = {}
 
-local function getCamRot( xmlFile, xmlProp, xmlAttr )
-	local text = getXMLString( xmlFile, xmlProp..'#'..xmlAttr )
-	
-	if     text == nil      then 
-		return nil
-	elseif text == "light"  then
-		return 1
-	elseif text == "true"   then
-		return 2
-	elseif text == "strong" then
-		return 3
-	end 
-	return 0
-end
-
-local function setCamRot( xmlFile, xmlProp, xmlAttr, value )
-	if type( value ) ~= "number" then return end 
-	local text
-	if     value <= 0 then 
-		text = "false" 
-	elseif value == 3 then 
-		text = "strong" 
-	elseif value == 1 then 
-		text = "light" 
-	else 
-		text = "true"
-	end 
-	if text ~= nil then 
-		setXMLString( xmlFile, xmlProp..'#'..xmlAttr, text )
-	end 
-end 
-
 function vehicleControlAddon.formatNumber( n, d, f ) -- number, decimals, (optional) factor 
 	if n == nil then 
 		return "nil" 
@@ -188,15 +156,6 @@ function vehicleControlAddon.mbClamp( v, minV, maxV )
 	return v 
 end
 
-local listOfPropertyTypes = {}
-listOfPropertyTypes.onLoad             = 1
-listOfPropertyTypes.serverOnly         = 2
-listOfPropertyTypes.clientOnly         = 3
-listOfPropertyTypes.serverToClient     = 4
-listOfPropertyTypes.clientToServer     = 5
-listOfPropertyTypes.fastServerToClient = 6
-listOfPropertyTypes.fastClientToServer = 7
-
 
 vehicleControlAddon.snapAngles = { 1, 5, 15, 22.5, 45, 90 }
 vehicleControlAddon.factor30pi = 30/math.pi  -- RPM = rotSpeed * vehicleControlAddon.factor30pi
@@ -219,6 +178,10 @@ vehicleControlAddon.colorBg              = { 0, 0, 0, 0.54 }
 
 vehicleControlAddon.properties = {}
 vehicleControlAddon.propertiesIndex = {}
+
+vehicleControlAddon.steeringFalse = "false"
+vehicleControlAddon.steeringTrue  = "true"
+vehicleControlAddon.steeringSoft  = "soft"
 
 function vehicleControlAddon.prerequisitesPresent(specializations)
 	return true
@@ -246,7 +209,7 @@ function vehicleControlAddon.createState( name, global, default, propFunc, callb
 end 
 
 function vehicleControlAddon.createStates()
-	vehicleControlAddon.createState( "steeringIsOn" , "adaptiveSteering"             , nil  , VCAValueType.bool  )
+	vehicleControlAddon.createState( "steeringIsOn" , "adaptiveSteering"             , nil  , VCAValueType.string)
 	vehicleControlAddon.createState( "peekLeftRight", "peekLeftRight"                , nil  , VCAValueType.bool  )
 	vehicleControlAddon.createState( "isForward"    , nil                            , true , VCAValueType.bool, nil, false  )
 	vehicleControlAddon.createState( "camRotInside" , "camInsideRotation"            , nil  , VCAValueType.int16 )
@@ -1599,6 +1562,8 @@ function vehicleControlAddon:onPreUpdate(dt, isActiveForInput, isActiveForInputI
 		self.spec_vca.lastAxisSteerTime2  = nil
 	end 
 	
+  local resetRotSpeed = true 
+
 	if      self.isClient
 			and self.getIsEntered  ~= nil and self:getIsEntered()
 			and self.spec_drivable ~= nil
@@ -1626,7 +1591,72 @@ function vehicleControlAddon:onPreUpdate(dt, isActiveForInput, isActiveForInputI
 			noARB = not noARB
 		end 
 		
-		if self.spec_vca.steeringIsOn or noARB then 
+		local rso = 1
+		if not ( 0.49 < self.spec_vca.rotSpeedOut and self.spec_vca.rotSpeedOut < 0.51 ) then 
+			rso = vehicleControlAddon.mbClamp( self.spec_vca.rotSpeedOut + self.spec_vca.rotSpeedOut, 0.01, 2 )
+		end 
+		local rsi = 1
+		if math.abs( self.spec_vca.rotSpeedIn - self.spec_vca.rotSpeedOut ) > 0.01 then 
+			rsi = vehicleControlAddon.mbClamp( self.spec_vca.rotSpeedIn + self.spec_vca.rotSpeedIn, 0.01, 2 ) / rso 
+		end 
+		
+		if self.spec_vca.steeringIsOn == nil then 
+			self.spec_vca.steeringIsOn = vehicleControlAddon.steeringFalse
+		end 
+		
+		--********************************************************************
+		-- Old, soft steering with reduced steering speed 
+		if self.spec_vca.steeringIsOn == vehicleControlAddon.steeringSoft then 
+			resetRotSpeed = false 
+			local speed = math.abs( self.lastSpeed * 3600 )
+			local f = 1
+			if     speed <= 12.5 then 
+				f = 2 - 0.8 * speed / 12.5
+			elseif speed <= 25 then 
+				f = 1.2 - 0.5 * ( speed - 12.5 ) / 12.5 
+			elseif speed <= 50 then 
+				f = 0.7 - 0.3 * ( speed - 25 ) / 25 
+			elseif speed <= 100 then 
+				f = 0.4 - 0.3 * ( speed - 50 ) / 50 
+			else 
+				f = 0.1
+			end 
+			
+			self.spec_vca.rotSpeedFactor      = f
+			self.spec_vca.autoRotateBackSpeed = self.autoRotateBackSpeed
+			
+			for i,w in pairs( self.spec_wheels.wheels ) do 
+				local attr = "rotSpeed"
+				if w.rotSpeedLimit ~= nil then
+					attr = "rotSpeedDefault"
+				end 
+
+				if w[attr] ~= nil then 
+					if w.vcaRotSpeed == nil then 
+						w.vcaRotSpeed = w[attr]
+					end 				
+					w[attr] = w.vcaRotSpeed * self.spec_vca.rotSpeedFactor
+				end 
+	
+				attr = "rotSpeedNeg" 
+				if w.rotSpeedLimit ~= nil then
+					attr = "rotSpeedNegDefault" 
+				end 
+	
+				if w[attr] ~= nil then 
+					if w.vcaRotSpeedNeg == nil then 
+						w.vcaRotSpeedNeg = w[attr] 
+					end 				
+					w[attr] = w.vcaRotSpeedNeg * self.spec_vca.rotSpeedFactor
+				end 
+			end 
+			
+			if noARB then 
+				self.autoRotateBackSpeed = 0 
+			end 
+		--********************************************************************
+		-- adaptive steering
+		elseif self.spec_vca.steeringIsOn == vehicleControlAddon.steeringTrue or noARB then 
 			if lastAxisSteer == nil then 
 				self.spec_vca.lastAxisSteer       = self.spec_drivable.lastInputValues.axisSteer 
 				self.spec_vca.lastAxisSteerAnalog = self.spec_drivable.lastInputValues.axisSteerIsAnalog 
@@ -1641,67 +1671,13 @@ function vehicleControlAddon:onPreUpdate(dt, isActiveForInput, isActiveForInputI
 				self.spec_vca.lastAxisSteerAnalog = self.spec_drivable.lastInputValues.axisSteerIsAnalog 
 				self.spec_vca.lastAxisSteerDevice = self.spec_drivable.lastInputValues.axisSteerDeviceCategory
 			end 
+			
+			if VCAGlobals.analogSteering then 
+				self.spec_vca.lastAxisSteerAnalog = false 
+			end 
 
 			local s = math.abs( self.lastSpeed * 3600 )
 			
-			local rso = 1
-			if not ( 0.49 < self.spec_vca.rotSpeedOut and self.spec_vca.rotSpeedOut < 0.51 ) then 
-				rso = vehicleControlAddon.mbClamp( self.spec_vca.rotSpeedOut + self.spec_vca.rotSpeedOut, 0.01, 2 )
-			end 
-			local rsi = 1
-			if math.abs( self.spec_vca.rotSpeedIn - self.spec_vca.rotSpeedOut ) > 0.01 then 
-				rsi = vehicleControlAddon.mbClamp( self.spec_vca.rotSpeedIn + self.spec_vca.rotSpeedIn, 0.01, 2 ) / rso 
-			end 
-		
-----******************************************************************************************************************************************
----- old adaptive steering 	
---	if self.vcaSteeringIsOn and not ( self.spec_vca.snapIsOn ) and self:vcaIsActive() then 
---		local f = 1
---		if     s <= 12.5 then 
---		  f = 2 - 0.8 * s / 12.5
---		elseif s <= 25 then 
---			f = 1.2 - 0.5 * ( s - 12.5 ) / 12.5 
---		elseif s <= 50 then 
---			f = 0.7 - 0.3 * ( s - 25 ) / 25 
---		elseif s <= 100 then 
---			f = 0.4 - 0.3 * ( s - 50 ) / 50 
---		else 
---			f = 0.1
---		end 
---		
---		self.vcaRotSpeedFactor = f
---		
---		for i,w in pairs( self.spec_wheels.wheels ) do 
---			if w.rotSpeed ~= nil then 
---				if w.vcaRotSpeed == nil then 
---					w.vcaRotSpeed = w.rotSpeed 
---				end 				
---				w.rotSpeed = w.vcaRotSpeed * f
---			end 
---			
---			if w.rotSpeedNeg ~= nil then 
---				if w.vcaRotSpeedNeg == nil then 
---					w.vcaRotSpeedNeg = w.rotSpeedNeg 
---				end 				
---				w.rotSpeedNeg = w.vcaRotSpeedNeg * f
---			end 
---		end 
---	elseif self.vcaRotSpeedFactor ~= nil then
---		for i,w in pairs( self.spec_wheels.wheels ) do 
---			if w.rotSpeed ~= nil and w.vcaRotSpeed ~= nil then 
---				w.rotSpeed = w.vcaRotSpeed
---			end 
---			
---			if w.rotSpeedNeg ~= nil and w.vcaRotSpeedNeg ~= nil then 
---				w.rotSpeedNeg = w.vcaRotSpeedNeg
---			end 
---		end 
---	
---		self.vcaRotSpeedFactor = nil 
---	end 
---	
-----******************************************************************************************************************************************
-		
 			if noARB or ( not self.spec_vca.lastAxisSteerAnalog and math.abs( self.spec_drivable.lastInputValues.axisSteer ) > 0.01 ) then 
 				local f = dt * 0.0005
 				if self.spec_vca.lastAxisSteerAnalog then 
@@ -1767,6 +1743,36 @@ function vehicleControlAddon:onPreUpdate(dt, isActiveForInput, isActiveForInputI
 			self.spec_drivable.lastInputValues.axisSteerDeviceCategory = InputDevice.CATEGORY.UNKNOWN
 		end 
 	end 
+	--********************************************************************
+	-- Reset of old, soft steering with reduced steering speed 
+	if resetRotSpeed and self.spec_vca.rotSpeedFactor ~= nil then
+		for i,w in pairs( self.spec_wheels.wheels ) do 
+			local attr = "rotSpeed"
+			if w.rotSpeedLimit ~= nil then
+				attr = "rotSpeedDefault"
+			end 
+
+			if w[attr] ~= nil and w.vcaRotSpeed ~= nil then 			
+				w[attr] = w.vcaRotSpeed
+				w.vcaRotSpeed = nil 
+			end 
+			
+			attr = "rotSpeedNeg" 
+			if w.rotSpeedLimit ~= nil then
+				attr = "rotSpeedNegDefault" 
+			end 
+			
+			if w[attr] ~= nil and w.vcaRotSpeedNeg ~= nil then 
+				w[attr] = w.vcaRotSpeedNeg
+				w.vcaRotSpeedNeg = nil
+			end 
+		end 
+		self.spec_vca.rotSpeedFactor = nil
+		self.autoRotateBackSpeed = self.spec_vca.autoRotateBackSpeed 
+		self.spec_vca.autoRotateBackSpeed = nil 
+	end 
+	--********************************************************************
+
 --******************************************************************************************************************************************
 
 	if self.isServer then 
@@ -2091,7 +2097,8 @@ function vehicleControlAddon:onUpdate(dt, isActiveForInput, isActiveForInputIgno
 
 			if      g_gameSettings:getValue("isHeadTrackingEnabled") 
 					and isHeadTrackingAvailable() 
-					and camera.headTrackingNode ~= nil then
+					and camera.headTrackingNode ~= nil
+					and not VCAGlobals.rotateHeadTracking then 
 				rotIsOn = 0 
 				revIsOn = false 
 			else 
@@ -3422,7 +3429,28 @@ function vehicleControlAddon:vcaUpdateVehiclePhysics( superFunc, axisForward, ax
 		self.spec_vca.axisSideLast   = axisSideLast
 	end 				
 	
-	return superFunc( self, axisForward, axisSide, doHandbrake, dt )
+-- remember and restore cruise control state when accelerating
+	local ccState = nil
+	local spec = self.spec_drivable
+	if      self.spec_vca ~= nil
+			and self:vcaIsVehicleControlledByPlayer()
+			and spec.cruiseControl.state ~= Drivable.CRUISECONTROL_STATE_OFF
+			and ( self:vcaGetShuttleCtrl() or self.movingDirection > 0 )
+			and axisForward > 0 then 
+		local speed,_ = self:getSpeedLimit(true)			
+		ccState = spec.cruiseControl.state
+		spec.cruiseControl.state = Drivable.CRUISECONTROL_STATE_OFF
+		self:getMotor():setSpeedLimit( speed )
+	end 
+	
+	local res = { superFunc( self, axisForward, axisSide, doHandbrake, dt ) }
+	
+	if ccState ~= nil and spec.cruiseControl.state == Drivable.CRUISECONTROL_STATE_OFF then 
+		self:setCruiseControlState(ccState)
+	end 
+	
+	return unpack( res )
+
 end 
 
 Drivable.updateVehiclePhysics = Utils.overwrittenFunction( Drivable.updateVehiclePhysics, vehicleControlAddon.vcaUpdateVehiclePhysics )
@@ -4149,7 +4177,12 @@ function vehicleControlAddon:vcaShowSettingsUI()
 
 	self.spec_vcaUI = {}
 	
-	self.spec_vcaUI.camRotInside    = { vehicleControlAddon.getText("vcaValueOff", "OFF"), 
+	self.spec_vcaUI.steeringIsOn  = { vehicleControlAddon.getText("vcaValueOff", "OFF"), 
+																		vehicleControlAddon.getText("vcaValueStrong", "STRONG"), 
+																		vehicleControlAddon.getText("vcaValueLight", "LIGHT"), 
+																	}
+	
+	self.spec_vcaUI.camRotInside  = { vehicleControlAddon.getText("vcaValueOff", "OFF"), 
 																		vehicleControlAddon.getText("vcaValueLight", "LIGHT"), 
 																		vehicleControlAddon.getText("vcaValueNormal", "NORMAL"), 
 																		vehicleControlAddon.getText("vcaValueStrong", "STRONG"), 
@@ -4211,6 +4244,27 @@ function vehicleControlAddon:vcaShowSettingsUI()
 	
 	g_gui:showDialog( "vehicleControlAddonMenu", true )	
 end
+
+function vehicleControlAddon:vcaUIGetsteeringIsOn()
+	if     self.spec_vca.steeringIsOn == nil then 
+		return 1
+	elseif self.spec_vca.steeringIsOn == vehicleControlAddon.steeringTrue then 
+		return 2
+	elseif self.spec_vca.steeringIsOn == vehicleControlAddon.steeringSoft then 
+		return 3
+	end
+	return 1
+end
+
+function vehicleControlAddon:vcaUISetsteeringIsOn( value )
+	if     value == 2 then 
+		self:vcaSetState( "steeringIsOn", vehicleControlAddon.steeringTrue)
+	elseif value == 3 then 
+		self:vcaSetState( "steeringIsOn", vehicleControlAddon.steeringSoft)
+	else 
+		self:vcaSetState( "steeringIsOn", vehicleControlAddon.steeringFalse)
+	end 
+end 
 
 function vehicleControlAddon:vcaUIGetbrakeForce()
 	local d = 2
