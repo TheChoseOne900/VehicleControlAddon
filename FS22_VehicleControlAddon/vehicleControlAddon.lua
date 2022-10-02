@@ -166,10 +166,7 @@ vehicleControlAddon.speedRatioClosed1    = 1.1  -- maxSpeedRatio of diff of whee
 vehicleControlAddon.speedRatioClosed2    = 1.2  -- at least 20% difference 
 vehicleControlAddon.distributeTorqueOpen = false  
 vehicleControlAddon.minTorqueRatio       = 0.3
-vehicleControlAddon.snapRadius           = 7
-vehicleControlAddon.snapLinear           = 1.5
-vehicleControlAddon.snapLinearFactor     = math.acos( 1 - vehicleControlAddon.snapLinear / vehicleControlAddon.snapRadius ) / vehicleControlAddon.snapLinear
-vehicleControlAddon.snapNonLinearFactor  = math.acos( 1 - vehicleControlAddon.snapLinear / vehicleControlAddon.snapRadius )
+vehicleControlAddon.snapRadius           = 10
 
 vehicleControlAddon.colorActive          = { 0.0003, 0.5647, 0.9822, 1 }
 vehicleControlAddon.colorInactive        = { 1, 1, 1, 1 }
@@ -471,6 +468,7 @@ function vehicleControlAddon:onLoad(savegame)
   self.spec_vca.snapDisabled  = false 
   self.spec_vca.snapPossible  = false 
   self.spec_vca.gpsProSeed    = false 
+	self.spec_vca.snapNoDisableTimer = 0
 
 	self.spec_vca.maxWheelSlip  = 0
 	self.spec_vca.maxBrakePedal = 1
@@ -497,11 +495,14 @@ function vehicleControlAddon:onLoad(savegame)
 		end 
 
 		if vehicleControlAddon.ovDiffLockFront == nil then
-			vehicleControlAddon.ovDiffLockFront  = createImageOverlay( Utils.getFilename( "dds/diff_front.dds",       g_vehicleControlAddon.vcaDirectory))
-			vehicleControlAddon.ovDiffLockMid    = createImageOverlay( Utils.getFilename( "dds/diff_middle.dds",      g_vehicleControlAddon.vcaDirectory))
-			vehicleControlAddon.ovDiffLockBack   = createImageOverlay( Utils.getFilename( "dds/diff_back.dds",        g_vehicleControlAddon.vcaDirectory))
-			vehicleControlAddon.ovDiffLockWheels = createImageOverlay( Utils.getFilename( "dds/diff_wheels.dds",      g_vehicleControlAddon.vcaDirectory))
-			vehicleControlAddon.ovDiffLockBg     = createImageOverlay( Utils.getFilename( "dds/diff_bg.dds",      g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockFront  = createImageOverlay( Utils.getFilename( "dds/diff_front.dds",     g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockMid    = createImageOverlay( Utils.getFilename( "dds/diff_middle.dds",    g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockBack   = createImageOverlay( Utils.getFilename( "dds/diff_back.dds",      g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockFL     = createImageOverlay( Utils.getFilename( "dds/diff_wheels_fl.dds", g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockFR     = createImageOverlay( Utils.getFilename( "dds/diff_wheels_fr.dds", g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockRL     = createImageOverlay( Utils.getFilename( "dds/diff_wheels_rl.dds", g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockRR     = createImageOverlay( Utils.getFilename( "dds/diff_wheels_rr.dds", g_vehicleControlAddon.vcaDirectory))
+			vehicleControlAddon.ovDiffLockBg     = createImageOverlay( Utils.getFilename( "dds/diff_bg.dds",        g_vehicleControlAddon.vcaDirectory))
 			local r, g, b, a = unpack(vehicleControlAddon.colorBg)
 			setOverlayColor( vehicleControlAddon.ovDiffLockBg, r, g, b, a )
 			vehicleControlAddon.ovGearSpeedBg    = createImageOverlay( Utils.getFilename( "dds/gear_bg.dds",      g_vehicleControlAddon.vcaDirectory))
@@ -538,6 +539,10 @@ function vehicleControlAddon:onPostLoad(savegame)
 	self.spec_vca.diffHasM = false 
 	self.spec_vca.diffHas2 = false 
 	self.spec_vca.diffHasB = false 
+	self.spec_vca.wheelIndexFL = -1
+	self.spec_vca.wheelIndexFR = -1
+	self.spec_vca.wheelIndexRL = -1
+	self.spec_vca.wheelIndexRR = -1
 	
 	if type( self.functionStatus ) == "function" and self:functionStatus("differential") then 
 	-- TSX diffs ...
@@ -666,12 +671,46 @@ function vehicleControlAddon:onPostLoad(savegame)
 		
 		for k,differential in pairs(spec.differentials) do
 			local rMin1, rMax1 = getMinMaxRotSpeed( k-1, false )
+			
+			local lx1, lx2 = nil, nil 
+			if differential.diffIndex1IsWheel and differential.diffIndex2IsWheel then 
+				local wx, wy, wz
+				wx, wy, wz = getWorldTranslation( self:getWheelFromWheelIndex( differential.diffIndex1 ).node )
+				lx1,_,_ = worldToLocal(self:vcaGetSteeringNode(), wx, wy, wz)
+				wx, wy, wz = getWorldTranslation( self:getWheelFromWheelIndex( differential.diffIndex2 ).node )
+				lx2,_,_ = worldToLocal(self:vcaGetSteeringNode(), wx, wy, wz)
+			end 
+			
 			if    rMax1 < 0.1 then 
 				differential.vcaMode = 'B' -- back axle, no steering
 				self.spec_vca.diffHasB = true 
+
+				if lx1 == nil or lx2 == nil then 
+					self.spec_vca.wheelIndexRL = -1
+					self.spec_vca.wheelIndexRR = -1
+				elseif lx1 > lx2 then 
+					self.spec_vca.wheelIndexRL = differential.diffIndex1
+					self.spec_vca.wheelIndexRR = differential.diffIndex2
+				else
+					self.spec_vca.wheelIndexRL = differential.diffIndex2
+					self.spec_vca.wheelIndexRR = differential.diffIndex1 
+				end 
+
 			elseif rMin1 > 0.1 then 
 				differential.vcaMode = 'F' -- front axle, with steering
 				self.spec_vca.diffHasF = true 
+
+				if lx1 == nil or lx2 == nil then 
+					self.spec_vca.wheelIndexFL = -1
+					self.spec_vca.wheelIndexFR = -1
+				elseif lx1 > lx2 then 
+					self.spec_vca.wheelIndexFL = differential.diffIndex1
+					self.spec_vca.wheelIndexFR = differential.diffIndex2
+				else
+					self.spec_vca.wheelIndexFL = differential.diffIndex2
+					self.spec_vca.wheelIndexFR = differential.diffIndex1 
+				end 
+
 			elseif not differential.diffIndex1IsWheel and not differential.diffIndex2IsWheel then 
 				differential.vcaMode = 'M' -- mid differential, between front and back
 				self.spec_vca.diffHasM = true 
@@ -742,6 +781,7 @@ function vehicleControlAddon:vcaSnapReverseLeft()
 	self:vcaSetState( "snapLeft", r )
 	self:vcaSetState( "snapRight", l )
 	self.spec_vca.snapPosTimer = math.max( Utils.getNoNil( self.spec_vca.snapPosTimer , 0 ), 3000 )
+	self.spec_vca.snapNoDisableTimer = g_currentMission.time + 2000
 end 
 
 function vehicleControlAddon:vcaSnapReverseRight()
@@ -761,6 +801,7 @@ function vehicleControlAddon:vcaSnapReverseRight()
 	self:vcaSetState( "snapLeft", r )
 	self:vcaSetState( "snapRight", l )
 	self.spec_vca.snapPosTimer = math.max( Utils.getNoNil( self.spec_vca.snapPosTimer , 0 ), 3000 )
+	self.spec_vca.snapNoDisableTimer = g_currentMission.time + 2000
 end 
 
 function vehicleControlAddon:onRegisterActionEvents(isSelected, isOnActiveVehicle)
@@ -1612,7 +1653,8 @@ function vehicleControlAddon:onPreUpdate(dt, isActiveForInput, isActiveForInputI
 			and self.spec_drivable ~= nil
 			and self:getIsActiveForInput(true, true)
 			and self:getIsVehicleControlledByPlayer()
-			and math.abs( self.spec_drivable.lastInputValues.axisSteer ) > 0.15 then 
+			and math.abs( self.spec_drivable.lastInputValues.axisSteer ) > 0.15
+			and self.spec_vca.snapNoDisableTimer < g_currentMission.time then 
 		self:vcaSetState( "snapIsOn", false )
 	end 
 	
@@ -2870,15 +2912,62 @@ function vehicleControlAddon:onDraw()
 				setOverlayColor( vehicleControlAddon.ovDiffLockFront, getRenderColor( f ) )
 				setOverlayColor( vehicleControlAddon.ovDiffLockMid  , getRenderColor( m ) )
 				setOverlayColor( vehicleControlAddon.ovDiffLockBack , getRenderColor( b ) )
-							
+				
+				local vehicleSpeed = self.lastSpeed * 1000 
+				local function setWheelColor( idx, ov )
+					local ws = nil 
+					if idx ~= nil and self.spec_wheels ~= nil and self.spec_wheels.wheels ~= nil and self.spec_wheels.wheels[idx] ~= nil then 
+						ws = self.spec_wheels.wheels[idx].vcaSpeed
+						if self:vcaGetShuttleCtrl() then 
+							if self.spec_motorized.motor.currentDirection < 0 then 
+								ws = -ws 
+							end 
+						else 
+							if self.movingDirection < 0 then 
+								ws = -ws 
+							end 
+						end 
+					end 
+					local r,g,b = 0.35,0.35,0.35
+					if ws ~= nil then 
+						if     ws <= vehicleSpeed then 
+							r = 1
+							g = 1
+							b = 1
+						elseif 0  >= vehicleSpeed then 
+						elseif ws >= 1.25 * vehicleSpeed then 
+							r = 1
+							g = 0 
+							b = 0
+						elseif ws >= 1.15 * vehicleSpeed then  
+							r = 1
+							g = 1 - 10 * ( ws / vehicleSpeed - 1.15 )
+							b = 0
+						else 
+							r = 1
+							g = 1 
+							b = 1 - 10 * ( ws / vehicleSpeed - 1.05 )
+						end 
+					end 
+					setOverlayColor( ov, r,g,b, 1 )
+				end 
+				
+				setWheelColor( self.spec_vca.wheelIndexFL, vehicleControlAddon.ovDiffLockFL )
+				setWheelColor( self.spec_vca.wheelIndexFR, vehicleControlAddon.ovDiffLockFR )
+				setWheelColor( self.spec_vca.wheelIndexRL, vehicleControlAddon.ovDiffLockRL )
+				setWheelColor( self.spec_vca.wheelIndexRR, vehicleControlAddon.ovDiffLockRR )
+				
 				renderOverlay( vehicleControlAddon.ovDiffLockBg    , posX, posY, width, height )
 				local prevWidth = width 
 				width = math.min( width, height / g_screenAspectRatio )
 				posX = posX + 0.5 * ( prevWidth - width )
-				renderOverlay( vehicleControlAddon.ovDiffLockWheels, posX, posY, width, height )
-				renderOverlay( vehicleControlAddon.ovDiffLockFront , posX, posY, width, height )
-				renderOverlay( vehicleControlAddon.ovDiffLockMid   , posX, posY, width, height )
-				renderOverlay( vehicleControlAddon.ovDiffLockBack  , posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockFL   , posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockFR   , posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockRL   , posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockRR   , posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockFront, posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockMid  , posX, posY, width, height )
+				renderOverlay( vehicleControlAddon.ovDiffLockBack , posX, posY, width, height )
 			else 
 				local prevWidth = width 
 				width = math.min( width, height / g_screenAspectRatio )
@@ -3528,32 +3617,31 @@ function vehicleControlAddon:vcaUpdateVehiclePhysics( superFunc, axisForward, ax
 
 			if vehicleControlAddon.snapCurve == nil then 
 				vehicleControlAddon.snapCurve = AnimCurve.new(linearInterpolator1)
+
+				local kf = {{x=0.01, y=0.01},
+										{x=0.02, y=0.02},
+										{x=0.05, y=0.08},
+										{x=0.10, y=0.25},
+										{x=0.12, y=0.42},
+										{x=0.15, y=0.52},
+										{x=0.20, y=0.66},
+										{x=0.30, y=0.82},
+										{x=0.40, y=0.95},
+										{x=0.50, y=1.07},
+										{x=0.60, y=1.18},
+										{x=0.80, y=1.40},
+										{x=0.90, y=1.50}}
+
+				local iMax = table.getn( kf )
+
 				vehicleControlAddon.snapCurve:addKeyframe({-math.pi*0.5,time=-1 }) 
-				vehicleControlAddon.snapCurve:addKeyframe({ -1.37 ,time=-0.8  }) 
-				vehicleControlAddon.snapCurve:addKeyframe({ -1.16 ,time=-0.6  })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.86 ,time=-0.4  })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.66 ,time=-0.3  })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.53 ,time=-0.25 })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.35 ,time=-0.2  })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.20 ,time=-0.15 })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.10 ,time=-0.1  })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.07 ,time=-0.075})
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.04 ,time=-0.05 })
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.02 ,time=-0.025})
-				vehicleControlAddon.snapCurve:addKeyframe({ -0.005,time=-0.01 })
-				vehicleControlAddon.snapCurve:addKeyframe({  0    ,time= 0    })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.005,time= 0.01 })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.02 ,time= 0.025})
-				vehicleControlAddon.snapCurve:addKeyframe({  0.04 ,time= 0.05 })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.07 ,time= 0.075})
-				vehicleControlAddon.snapCurve:addKeyframe({  0.10 ,time= 0.1  })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.20 ,time= 0.15 })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.35 ,time= 0.2  })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.53 ,time= 0.25 })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.66 ,time= 0.3  })
-				vehicleControlAddon.snapCurve:addKeyframe({  0.86 ,time= 0.4  })
-				vehicleControlAddon.snapCurve:addKeyframe({  1.16 ,time= 0.6  })
-				vehicleControlAddon.snapCurve:addKeyframe({  1.37 ,time= 0.8  })   
+				for i=iMax,1,-1 do 
+					vehicleControlAddon.snapCurve:addKeyframe({-kf[i].y, time=-kf[i].x})
+				end 
+				vehicleControlAddon.snapCurve:addKeyframe({0 ,time=0})
+				for i=1,iMax,1 do 
+					vehicleControlAddon.snapCurve:addKeyframe({kf[i].y, time=kf[i].x})
+				end 
 				vehicleControlAddon.snapCurve:addKeyframe({ math.pi*0.5,time=1 })   
 			end 
 			
@@ -3564,9 +3652,7 @@ function vehicleControlAddon:vcaUpdateVehiclePhysics( superFunc, axisForward, ax
 				local distZ = wz - self.spec_vca.lastSnapPosZ 			
 				local dist  = dist + distX * dz - distZ * dx + self.spec_vca.snapFactor * self.spec_vca.snapDistance
 				local d2    = vehicleControlAddon.mbClamp( dist / vehicleControlAddon.snapRadius, -1, 1 )
-			--local alpha = d2 * 0.5 * math.pi
 				local alpha = vehicleControlAddon.snapCurve:get( d2 )
-
 				diffR = diffR + alpha				
 			end 
 			local a = vehicleControlAddon.mbClamp( vehicleControlAddon.normalizeAngle( diffR ) * 6, -1, 1 )
@@ -3575,8 +3661,8 @@ function vehicleControlAddon:vcaUpdateVehiclePhysics( superFunc, axisForward, ax
 				a = -a 
 			end
 
-			d = 0.0005 * ( 2 + math.min( 18, self.lastSpeed * 3600 ) ) * dt
-		--d = 1
+			local d
+			d = 0.0002 * dt * ( 2 + math.min( 18, self.lastSpeed * 3600 ) )
 			
 			if axisSideLast == nil then 
 				axisSideLast = axisSide
